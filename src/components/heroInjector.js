@@ -139,10 +139,20 @@ const HERO_CSS = `
   align-items: flex-end;
 }
 
-/* ── Services list ── */
+/* ── Services list (continuous sliding marquee) ── */
 .xo-hero-services {
+  position: relative;
+  height: 40px;
+  overflow: clip;
+  white-space: nowrap;
+}
+.xo-hero-services-track {
   display: flex;
   flex-direction: column;
+  padding-top: 10px;
+  -webkit-mask: linear-gradient(#0000, #000 50%, #0000);
+  mask: linear-gradient(#0000, #000 50%, #0000);
+  will-change: transform;
 }
 .xo-hero-service-item {
   font-family: 'Coolvetica Rg Cond', Arial, sans-serif;
@@ -151,7 +161,9 @@ const HERO_CSS = `
   text-transform: uppercase;
   color: #fff;
   letter-spacing: 0.7px;
-  line-height: 1.4;
+  line-height: 1;
+  margin-bottom: 8px;
+  display: block;
 }
 
 /* ── Scroll indicator ── */
@@ -264,6 +276,7 @@ const HERO_CSS = `
   line-height: 18px;
   white-space: nowrap;
   display: block;
+  margin: 0;
   transition: transform 0.35s cubic-bezier(0.4,0,0.2,1);
 }
 .xo-hero-badge-label {
@@ -291,7 +304,7 @@ const HERO_CSS = `
 
 /* ── Entrance animation initial states ── */
 .xo-hero-subtitle,
-.xo-hero-service-item,
+.xo-hero-services,
 .xo-hero-scroll-indicator,
 .xo-hero-badge-card {
   opacity: 0;
@@ -331,11 +344,14 @@ const OVERLAY_HTML = `
   <div class="xo-hero-bottom-grid">
     <div class="xo-hero-bottom-left">
       <div class="xo-hero-services">
-        <span class="xo-hero-service-item">Web Design</span>
-        <span class="xo-hero-service-item">Social Media</span>
-        <span class="xo-hero-service-item">Marketing</span>
-        <span class="xo-hero-service-item">Development</span>
-        <span class="xo-hero-service-item">SEO Optimization</span>
+        <div class="xo-hero-services-track">
+          <span class="xo-hero-service-item">Web Design</span>
+          <span class="xo-hero-service-item">Social Media</span>
+          <span class="xo-hero-service-item">Marketing</span>
+          <span class="xo-hero-service-item">Development</span>
+          <span class="xo-hero-service-item">SEO Optimization</span>
+          <span class="xo-hero-service-item" aria-hidden="true">Web Design</span>
+        </div>
       </div>
     </div>
     <div class="xo-hero-bottom-center">
@@ -370,46 +386,45 @@ const OVERLAY_HTML = `
 export function injectHero(doc, win, onReady) {
   const heroSection = doc.querySelector('.section-home-header')
   if (!heroSection) return
+  if (doc.querySelector('.xo-hero-overlay')) {
+    if (onReady) onReady()
+    return
+  }
 
   const grid = heroSection.querySelector('.header-component-grid')
   if (!grid) return
 
   const navbar = doc.querySelector('.navbar')
 
-  // 1. Inject styles
   const style = doc.createElement('style')
   style.textContent = HERO_CSS
   doc.head.appendChild(style)
 
-  // 2. Ensure grid is a positioning context
+  // Grid must be a positioning context for the absolute-positioned overlay.
   grid.style.position = 'relative'
 
-  // 3. Create the overlay
   const overlay = doc.createElement('div')
   overlay.className = 'xo-hero-overlay'
   overlay.innerHTML = OVERLAY_HTML
   grid.appendChild(overlay)
 
-  // 4. Activate V1 — hide original Webflow hero content
   heroSection.classList.add('xo-v1')
 
-  // Set navbar initial state for entrance animation
   if (navbar) {
     navbar.style.opacity = '0'
     navbar.style.transform = 'translateY(-20px)'
   }
 
-  // 5. Signal ready — hero is injected and safe to reveal
+  // Signal ready before entrance runs so the loading screen fades into the pre-entrance state, not a flash of animated content.
   if (onReady) onReady()
 
-  // 6. Run entrance animation immediately (don't wait for SDK)
   runOverlayEntrance(win, overlay, navbar)
 
-  // 7. Load UnicornStudio SDK in background
   const unicornEl = overlay.querySelector('.xo-hero-unicorn')
   if (unicornEl) unicornEl.style.opacity = '0'
 
   const script = doc.createElement('script')
+  script.crossOrigin = 'anonymous'
   script.src = 'https://cdn.jsdelivr.net/gh/hiunicornstudio/unicornstudio.js@2.1.6/dist/unicornStudio.umd.js'
   script.onload = () => {
     if (win.UnicornStudio) {
@@ -454,9 +469,9 @@ function runOverlayEntrance(win, overlay, navbar) {
   )
 
   tl.fromTo(
-    overlay.querySelectorAll('.xo-hero-service-item'),
+    overlay.querySelector('.xo-hero-services'),
     { opacity: 0, y: 16 },
-    { opacity: 1, y: 0, duration: 0.7, stagger: 0.06, ease: 'power2.out' },
+    { opacity: 1, y: 0, duration: 0.7, ease: 'power2.out' },
     0.5
   )
 
@@ -473,4 +488,32 @@ function runOverlayEntrance(win, overlay, navbar) {
     { opacity: 1, y: 0, duration: 1, ease: 'power3.out' },
     0.6
   )
+
+  tl.call(() => runServicesCycle(win, overlay), null, 1.4)
+}
+
+/* ═══════════════════════════════════════════
+   SERVICES ROLLING TICKER
+   ═══════════════════════════════════════════ */
+
+function runServicesCycle(win, overlay) {
+  const gsap = win.gsap
+  const track = overlay.querySelector('.xo-hero-services-track')
+  if (!gsap || !track) return
+
+  const items = track.querySelectorAll('.xo-hero-service-item')
+  if (items.length < 2) return
+
+  const cs = win.getComputedStyle(items[0])
+  const step = items[0].offsetHeight + parseFloat(cs.marginBottom) || 27.2
+  const realCount = items.length - 1 // last item duplicates first for seamless loop
+  const secondsPerItem = 1.8
+
+  gsap.set(track, { y: 0 })
+  gsap.to(track, {
+    y: -realCount * step,
+    duration: secondsPerItem * realCount,
+    ease: 'none',
+    repeat: -1,
+  })
 }
